@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
 	"io"
 	"log"
@@ -8,14 +9,6 @@ import (
 	"os"
 	"path/filepath"
 )
-
-// Considerando: Nome_Func(quantidade_de Bytes)
-// Start(2) => 16bits
-// Type(1) => 8bits
-// SEQ(4) => 32bits
-// Length(4) => 32bits
-// Payload(variable) => N*8bits | filename_length(1) | filename(N) | file_size(8 bytes) |
-// CRC32(4) => 32bits
 
 func MetaData() (int, string, int64, string) { //
 
@@ -29,11 +22,10 @@ func MetaData() (int, string, int64, string) { //
 
 	String_Size := len(fileInfo.Name())
 
-	//Retorna Tamanho do nome, nome, tamanho e tipo do arquivo
 	return String_Size, fileInfo.Name(), fileInfo.Size(), archivetype
 }
 
-func Type(Identify_byte byte, name_file string, size_file int64) (string, string, int64) { //primeira string é teste
+func Type(Identify_byte byte) byte { //primeira string é teste
 
 	//identificador de inicio de comunicação
 	StartEvent_Type := []byte{0x01} //Tipo de evento Start
@@ -43,32 +35,24 @@ func Type(Identify_byte byte, name_file string, size_file int64) (string, string
 	Erro_Type := []byte{0x05}       //Tipo de evento Erro
 
 	if Identify_byte == StartEvent_Type[0] {
-		return "start", name_file, size_file
+		return StartEvent_Type[0]
 	}
 	if Identify_byte == Chunk_Type[0] {
-		return "chunk", name_file, size_file
+		return Chunk_Type[0]
 	}
 	if Identify_byte == End_Type[0] {
-		return "end", name_file, size_file
+		return End_Type[0]
 	}
 	if Identify_byte == ACK_Type[0] {
-		return "ack", name_file, size_file
+		return ACK_Type[0]
 	}
 	if Identify_byte == Erro_Type[0] {
-		return "erro", name_file, size_file
+		return Erro_Type[0]
 	}
 
-	fmt.Println("Start Event Type:", StartEvent_Type, "Chunk Type:", Chunk_Type, "End Type:", End_Type, "ACK Type:", ACK_Type, "Erro Type:", Erro_Type)
-	return "", name_file, size_file
+	return StartEvent_Type[0]
 
 }
-
-func Start_header() {
-	_, Archive_Name, file_size, _ := MetaData() //se não quiser retorno coloque = "_"
-	fmt.Println(Type(0x02, Archive_Name, file_size))
-}
-
-// divisa de trabalho :
 
 func Read_file() ([]byte, error) {
 
@@ -89,38 +73,48 @@ func Read_file() ([]byte, error) {
 	return data, nil
 }
 
-func handle(conn net.Conn) {
+func handler(conn net.Conn) {
 	defer conn.Close()
 
-	//reader := bufio.NewReader(conn)
-
-	//buffer := make([]byte, 1024) buffer em martiz de 1kB
 	buffer, err := Read_file()
 	if err != nil {
 		return
 	}
 
+	header := [4]byte{}
+	header_value := [1]byte{}
+	file_size := [8]byte{}
+
+	_, filenametmp, filesizetmp, _ := MetaData()
+	file_name := []byte(filenametmp)
+
+	file_name_size := make([]byte, 4)
+	binary.BigEndian.PutUint32(file_name_size, uint32(len(filenametmp)))
+
+	fmt.Println("Nome do arquivo:", string(file_name))
 	pos := 0
 	tamanho := len(buffer)
 
-	for pos < tamanho{
-	
+	for pos < tamanho {
 
-			end := pos + 1024
-			if end > tamanho {
-				end = tamanho
-			}
+		header[0] = Type(header_value[0]) //Start Event
+		binary.BigEndian.PutUint64(file_size[:], uint64(filesizetmp))
 
-			parte := buffer[pos:end]
-			
-			byte_sender, err := conn.Write(parte) 
-			if err != nil {
-				log.Println("Client saiu", err)
-				return
-			}
-			
-			pos += len(parte)
-			fmt.Println("_", byte_sender)
+		end := pos + 1024
+		if end > tamanho {
+			end = tamanho
+		}
+
+		parte := buffer[pos:end]
+
+		byte_sender, err := conn.Write(parte)
+		if err != nil {
+			log.Println("Client saiu", err)
+			return
+		}
+
+		pos += len(parte)
+		fmt.Println("_", byte_sender)
 	}
 }
 
@@ -140,7 +134,7 @@ func main() {
 			continue
 		}
 
-		go handle(conn)
+		go handler(conn)
 	}
 
 }
